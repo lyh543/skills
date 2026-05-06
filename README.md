@@ -6,12 +6,17 @@
 
 ```bash
 git clone --recurse-submodules git@github.com:lyh543/skills.git ~/.agents/skills
+# or use HTTPS
+git clone --recurse-submodules https://github.com/lyh543/skills.git ~/.agents/skills
 ```
-
+  
 如果已克隆但未初始化子模块：
 
 ```bash
 git clone git@github.com:lyh543/skills.git ~/.agents/skills
+# or use HTTPS
+git clone https://github.com/lyh543/skills.git ~/.agents/skills
+
 cd ~/.agents/skills
 git submodule update --init --recursive
 ```
