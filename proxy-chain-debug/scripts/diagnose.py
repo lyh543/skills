@@ -153,10 +153,10 @@ def check_nftables():
         print(f"  Found: {redirect_port or 'no redirect rule'}")
         # Check if anything listens on that port
         if redirect_port:
-            port_match = re.search(r"(\d+)", redirect_port)
+            port_match = re.search(r":(\d+)", redirect_port)
             if port_match:
                 port = port_match.group(1)
-                listen_check, _ = shell(f"ss -tlnp | grep {port}")
+                listen_check, _ = shell(f"ss -tlnp | grep -w {port}")
                 if listen_check:
                     print(f"  [OK] Port {port} has listener")
                 else:
@@ -342,10 +342,24 @@ def check_direct_connectivity():
 
     # Test 1.1.1.1:443 (non-http port to avoid transparent proxy effects)
     subsection("HTTPS to 1.1.1.1:443")
-    success, detail = test_socks5_proxy(
-        "1.1.1.1", 443, "1.1.1.1", 443, timeout_sec=8
-    )
-    print(f"  [{'OK' if success else 'FAIL'}] {detail}")
+    try:
+        import ssl as ssl_mod
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(8)
+        s.connect(("1.1.1.1", 443))
+        ctx = ssl_mod.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl_mod.CERT_NONE
+        ss = ctx.wrap_socket(s, server_hostname="1.1.1.1")
+        ss.do_handshake()
+        ss.close()
+        print(f"  [OK] TLS handshake successful")
+    except socket.timeout:
+        print(f"  [FAIL] Connection timed out (8s)")
+    except ConnectionRefusedError:
+        print(f"  [FAIL] Connection refused")
+    except Exception as e:
+        print(f"  [FAIL] {e}")
 
     # Test raw TCP to common ports
     subsection("Raw TCP to known hosts")
@@ -375,34 +389,28 @@ def check_direct_connectivity():
 def summary():
     section("10. Diagnosis Summary")
 
-    checks = {
-        "v2raya service": ("systemctl is-active v2raya", "active"),
-        "nftables v2raya rules": ("nft list table inet v2raya 2>&1", "redirect to :52345"),
-        "xray listening on 52345": ("ss -tlnp | grep 52345", "LISTEN"),
-        "win-proxy reachable": ("ping -c 1 -W 2 win-proxy", "1 received"),
-        "SOCKS5 to httpbin.org:80 via win-proxy": None,  # will be set below
-    }
+    simple_checks = [
+        ("v2raya service", "systemctl is-active v2raya", "active"),
+        ("nftables v2raya rules", "nft list table inet v2raya 2>&1", "redirect to :52345"),
+        ("xray listening on 52345", "ss -tlnp | grep 52345", "LISTEN"),
+        ("win-proxy reachable", "ping -c 1 -W 2 win-proxy", "1 received"),
+    ]
 
     passed = 0
-    total = len(checks) - 1  # exclude socks test from simple checks
+    total = len(simple_checks) + 1  # +1 for socks test
 
-    for name, (cmd, expect) in checks.items():
-        if cmd is None:
-            continue
+    for name, cmd, expect in simple_checks:
         out, _ = shell(cmd)
         ok = expect in out
-        status = "PASS" if ok else "FAIL"
         if ok:
             passed += 1
-        print(f"  [{status}] {name}")
+        print(f"  [{'PASS' if ok else 'FAIL'}] {name}")
 
     # SOCKS5 test check
     socks_ok, _ = test_socks5_proxy("win-proxy", 7890, "httpbin.org", 80, timeout_sec=6)
     if socks_ok:
         passed += 1
     print(f"  [{'PASS' if socks_ok else 'FAIL'}] SOCKS5 to httpbin.org:80 via win-proxy")
-
-    total += 1
     print(f"\n  Score: {passed}/{total} checks passed")
 
     if passed < total:
